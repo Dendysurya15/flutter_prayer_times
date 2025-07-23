@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
-import 'package:get/get.dart';
-
 class DonationController extends GetxController {
   var donationAmount = 0.0.obs;
   var isProcessing = false.obs;
@@ -30,7 +28,6 @@ class DonationController extends GetxController {
 
   Future<void> processDonation() async {
     isProcessing(true);
-    // TODO: Implement donation processing logic
     await Future.delayed(const Duration(seconds: 2));
     isProcessing(false);
   }

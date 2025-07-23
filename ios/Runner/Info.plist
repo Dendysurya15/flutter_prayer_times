@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Notif Donate</string>
+	<string>Prayer Times</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>notif_donate</string>
+	<string>prayer_times_app</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -45,5 +45,46 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	
+	<!-- LOCATION PERMISSIONS -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app needs location access to show accurate prayer times for your area.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app needs location access to show accurate prayer times for your area.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>This app needs location access to show accurate prayer times for your area.</string>
+	
+	<!-- NOTIFICATION PERMISSIONS -->
+	<key>UIUserNotificationSettings</key>
+	<dict>
+		<key>UIUserNotificationTypeAlert</key>
+		<true/>
+		<key>UIUserNotificationTypeBadge</key>
+		<true/>
+		<key>UIUserNotificationTypeSound</key>
+		<true/>
+	</dict>
+	
+	<!-- BACKGROUND MODES for notifications -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>background-notification</string>
+		<string>background-fetch</string>
+		<string>background-processing</string>
+	</array>
+	
+	<!-- ALLOW ARBITRARY LOADS for API calls -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	
+	<!-- SOUND FILES (if you add custom notification sounds) -->
+	<key>CFBundleResourceSpecification</key>
+	<dict>
+		<key>adhan.caf</key>
+		<string>adhan.caf</string>
+	</dict>
 </dict>
 </plist>
