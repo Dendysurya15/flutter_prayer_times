@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tz;
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:get/get.dart';
-import 'dart:async';
 
 class NotificationService extends GetxService {
   static final FlutterLocalNotificationsPlugin _notifications =
@@ -16,6 +18,7 @@ class NotificationService extends GetxService {
   Future<void> onInit() async {
     super.onInit();
     await _initPreferences();
+    await _configureTimeZone();
     await initializeNotifications();
   }
 
@@ -40,6 +43,29 @@ class NotificationService extends GetxService {
     }
   }
 
+  Future<void> _configureTimeZone() async {
+    try {
+      print('🌍 Initializing timezone...');
+      tz.initializeTimeZones();
+
+      try {
+        final String timeZoneName = await FlutterTimezone.getLocalTimezone();
+        print('🌍 Local timezone: $timeZoneName');
+        tz.setLocalLocation(tz.getLocation(timeZoneName));
+      } catch (e) {
+        print('⚠️ Could not get local timezone, using UTC: $e');
+        tz.setLocalLocation(tz.UTC);
+      }
+
+      print('✅ Timezone configured successfully');
+    } catch (e) {
+      print('❌ Timezone configuration failed: $e');
+      // Fallback to UTC
+      tz.initializeTimeZones();
+      tz.setLocalLocation(tz.UTC);
+    }
+  }
+
   Future<void> initializeNotifications() async {
     const AndroidInitializationSettings androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -58,6 +84,9 @@ class NotificationService extends GetxService {
 
     await _notifications.initialize(settings);
 
+    // Create notification channels
+    await _createNotificationChannels();
+
     // Request permissions for scheduled notifications
     await _notifications
         .resolvePlatformSpecificImplementation<
@@ -70,6 +99,61 @@ class NotificationService extends GetxService {
           AndroidFlutterLocalNotificationsPlugin
         >()
         ?.requestExactAlarmsPermission();
+  }
+
+  Future<void> _createNotificationChannels() async {
+    final simpleChannel = AndroidNotificationChannel(
+      'simple_channel',
+      'Simple Notifications',
+      description: 'Basic notifications',
+      importance: Importance.high,
+      playSound: soundEnabled.value,
+      enableVibration: true,
+      showBadge: true,
+    );
+
+    final scheduledChannel = AndroidNotificationChannel(
+      'scheduled_channel',
+      'Scheduled Notifications',
+      description: 'Notifications scheduled for future',
+      importance: Importance.high,
+      playSound: soundEnabled.value,
+      enableVibration: true,
+      showBadge: true,
+    );
+
+    final prayerChannel = AndroidNotificationChannel(
+      'prayer_channel',
+      'Prayer Times',
+      description: 'Prayer time notifications',
+      importance: Importance.max,
+      playSound: soundEnabled.value,
+      enableVibration: true,
+      showBadge: true,
+    );
+
+    final reminderChannel = AndroidNotificationChannel(
+      'reminder_channel',
+      'Prayer Reminders',
+      description: 'Prayer reminder notifications',
+      importance: Importance.high,
+      playSound: soundEnabled.value,
+      enableVibration: true,
+      showBadge: true,
+    );
+
+    final androidImpl =
+        _notifications
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
+
+    if (androidImpl != null) {
+      await androidImpl.createNotificationChannel(simpleChannel);
+      await androidImpl.createNotificationChannel(scheduledChannel);
+      await androidImpl.createNotificationChannel(prayerChannel);
+      await androidImpl.createNotificationChannel(reminderChannel);
+    }
   }
 
   // Simple notification for testing
@@ -109,111 +193,134 @@ class NotificationService extends GetxService {
     print('✅ Simple notification sent!');
   }
 
-  // Schedule test notification using Timer
-  Timer? _scheduledTimer;
-
+  // REAL SCHEDULING - Works when app is closed!
   Future<void> scheduleNotification({required int seconds}) async {
     try {
-      print(
-        '⏰ Scheduling notification for $seconds seconds from now using Timer...',
-      );
+      print('⏰ REAL scheduling notification for $seconds seconds from now...');
       print('🔊 Sound enabled: ${soundEnabled.value}');
 
-      // Cancel any existing timer
-      _scheduledTimer?.cancel();
+      final scheduledTime = DateTime.now().add(Duration(seconds: seconds));
 
-      // Create a timer that will fire the notification
-      _scheduledTimer = Timer(Duration(seconds: seconds), () async {
-        print('🔔 Timer fired! Sending scheduled notification...');
+      // Convert to TZDateTime
+      tz.TZDateTime scheduledTZTime;
+      try {
+        scheduledTZTime = tz.TZDateTime.from(scheduledTime, tz.local);
+        print('🌍 Converted to TZ time: $scheduledTZTime');
+      } catch (e) {
+        print('⚠️ TZ conversion failed, retrying: $e');
+        await _configureTimeZone();
+        scheduledTZTime = tz.TZDateTime.from(scheduledTime, tz.local);
+      }
 
-        final androidDetails = AndroidNotificationDetails(
-          'scheduled_channel',
-          'Scheduled Notifications',
-          channelDescription: 'Notifications scheduled for future',
-          importance: Importance.high,
-          priority: Priority.high,
-          icon: '@mipmap/ic_launcher',
-          playSound: soundEnabled.value,
-          enableVibration: true,
-        );
+      final androidDetails = AndroidNotificationDetails(
+        'scheduled_channel',
+        'Scheduled Notifications',
+        channelDescription: 'Notifications scheduled for future',
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher',
+        playSound: soundEnabled.value,
+        enableVibration: true,
+      );
 
-        final iosDetails = DarwinNotificationDetails(
-          presentAlert: true,
-          presentBadge: true,
-          presentSound: soundEnabled.value,
-        );
+      final iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: soundEnabled.value,
+      );
 
-        final notificationDetails = NotificationDetails(
-          android: androidDetails,
-          iOS: iosDetails,
-        );
+      final notificationDetails = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
 
-        await _notifications.show(
-          2,
-          'Scheduled Notification ⏰',
-          'This notification was scheduled $seconds seconds ago! 🎉',
-          notificationDetails,
-        );
+      await _notifications.zonedSchedule(
+        2, // Unique ID for test notifications
+        'Scheduled Notification ⏰',
+        'This notification was scheduled $seconds seconds ago! 🎉 (Works when app closed)',
+        scheduledTZTime,
+        notificationDetails,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
 
-        print('✅ Scheduled notification sent!');
-      });
-
-      print('✅ Timer scheduled successfully for $seconds seconds');
+      print('✅ REAL notification scheduled for: $scheduledTZTime');
+      print('🚀 This will work even if app is closed!');
     } catch (e) {
       print('❌ Error scheduling notification: $e');
       throw e;
     }
   }
 
-  // Prayer notification methods
+  // REAL PRAYER NOTIFICATIONS - Work when app is closed!
   Future<void> schedulePrayerNotification({
     required int seconds,
     required String title,
     required String body,
   }) async {
     try {
-      print('🕌 Scheduling prayer notification: $title in $seconds seconds');
+      print(
+        '🕌 REAL scheduling prayer notification: $title in $seconds seconds',
+      );
       print('🔊 Sound enabled: ${soundEnabled.value}');
 
-      Timer(Duration(seconds: seconds), () async {
-        print('🔔 Prayer time! Sending: $title');
+      final scheduledTime = DateTime.now().add(Duration(seconds: seconds));
 
-        final androidDetails = AndroidNotificationDetails(
-          'prayer_channel',
-          'Prayer Times',
-          channelDescription: 'Prayer time notifications',
-          importance: Importance.max,
-          priority: Priority.high,
-          icon: '@mipmap/ic_launcher',
-          playSound: soundEnabled.value,
-          enableVibration: true,
-          ongoing: false,
-          autoCancel: true,
-        );
+      // Convert to TZDateTime
+      tz.TZDateTime scheduledTZTime;
+      try {
+        scheduledTZTime = tz.TZDateTime.from(scheduledTime, tz.local);
+      } catch (e) {
+        await _configureTimeZone();
+        scheduledTZTime = tz.TZDateTime.from(scheduledTime, tz.local);
+      }
 
-        final iosDetails = DarwinNotificationDetails(
-          presentAlert: true,
-          presentBadge: true,
-          presentSound: soundEnabled.value,
-          interruptionLevel: InterruptionLevel.timeSensitive,
-        );
+      final androidDetails = AndroidNotificationDetails(
+        'prayer_channel',
+        'Prayer Times',
+        channelDescription: 'Prayer time notifications',
+        importance: Importance.max,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher',
+        playSound: soundEnabled.value,
+        enableVibration: true,
+        ongoing: false,
+        autoCancel: true,
+      );
 
-        final notificationDetails = NotificationDetails(
-          android: androidDetails,
-          iOS: iosDetails,
-        );
+      final iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: soundEnabled.value,
+        interruptionLevel: InterruptionLevel.timeSensitive,
+      );
 
-        await _notifications.show(
-          DateTime.now().millisecondsSinceEpoch % 10000,
-          title,
-          body,
-          notificationDetails,
-        );
+      final notificationDetails = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
 
-        print('✅ Prayer notification sent: $title');
-      });
+      // Generate unique ID based on time and prayer name
+      final notificationId =
+          (DateTime.now().millisecondsSinceEpoch % 100000) +
+          (title.hashCode % 1000);
 
-      print('✅ Prayer notification scheduled successfully');
+      await _notifications.zonedSchedule(
+        notificationId,
+        title,
+        body,
+        scheduledTZTime,
+        notificationDetails,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+
+      print(
+        '✅ REAL prayer notification scheduled: $title for $scheduledTZTime',
+      );
+      print('🚀 Will work even when app is closed!');
     } catch (e) {
       print('❌ Error scheduling prayer notification: $e');
       throw e;
@@ -226,48 +333,68 @@ class NotificationService extends GetxService {
     required String body,
   }) async {
     try {
-      print('⏰ Scheduling reminder notification: $title in $seconds seconds');
+      print(
+        '⏰ REAL scheduling reminder notification: $title in $seconds seconds',
+      );
       print('🔊 Sound enabled: ${soundEnabled.value}');
 
-      Timer(Duration(seconds: seconds), () async {
-        print('🔔 Reminder time! Sending: $title');
+      final scheduledTime = DateTime.now().add(Duration(seconds: seconds));
 
-        final androidDetails = AndroidNotificationDetails(
-          'reminder_channel',
-          'Prayer Reminders',
-          channelDescription: 'Prayer reminder notifications',
-          importance: Importance.high,
-          priority: Priority.high,
-          icon: '@mipmap/ic_launcher',
-          playSound: soundEnabled.value,
-          enableVibration: true,
-          ongoing: false,
-          autoCancel: true,
-        );
+      // Convert to TZDateTime
+      tz.TZDateTime scheduledTZTime;
+      try {
+        scheduledTZTime = tz.TZDateTime.from(scheduledTime, tz.local);
+      } catch (e) {
+        await _configureTimeZone();
+        scheduledTZTime = tz.TZDateTime.from(scheduledTime, tz.local);
+      }
 
-        final iosDetails = DarwinNotificationDetails(
-          presentAlert: true,
-          presentBadge: true,
-          presentSound: soundEnabled.value,
-          interruptionLevel: InterruptionLevel.active,
-        );
+      final androidDetails = AndroidNotificationDetails(
+        'reminder_channel',
+        'Prayer Reminders',
+        channelDescription: 'Prayer reminder notifications',
+        importance: Importance.high,
+        priority: Priority.high,
+        icon: '@mipmap/ic_launcher',
+        playSound: soundEnabled.value,
+        enableVibration: true,
+        ongoing: false,
+        autoCancel: true,
+      );
 
-        final notificationDetails = NotificationDetails(
-          android: androidDetails,
-          iOS: iosDetails,
-        );
+      final iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: soundEnabled.value,
+        interruptionLevel: InterruptionLevel.active,
+      );
 
-        await _notifications.show(
-          DateTime.now().millisecondsSinceEpoch % 10000,
-          title,
-          body,
-          notificationDetails,
-        );
+      final notificationDetails = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
 
-        print('✅ Reminder notification sent: $title');
-      });
+      // Generate unique ID based on time and reminder name
+      final notificationId =
+          (DateTime.now().millisecondsSinceEpoch % 100000) +
+          (title.hashCode % 1000) +
+          50000;
 
-      print('✅ Reminder notification scheduled successfully');
+      await _notifications.zonedSchedule(
+        notificationId,
+        title,
+        body,
+        scheduledTZTime,
+        notificationDetails,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+
+      print(
+        '✅ REAL reminder notification scheduled: $title for $scheduledTZTime',
+      );
+      print('🚀 Will work even when app is closed!');
     } catch (e) {
       print('❌ Error scheduling reminder notification: $e');
       throw e;
@@ -278,6 +405,7 @@ class NotificationService extends GetxService {
   Future<void> enableSound() async {
     soundEnabled.value = true;
     await _saveSoundPreference(true);
+    await _recreateNotificationChannels();
     print('🔊 Sound enabled and saved');
     Get.snackbar(
       'Sound On',
@@ -290,6 +418,7 @@ class NotificationService extends GetxService {
   Future<void> disableSound() async {
     soundEnabled.value = false;
     await _saveSoundPreference(false);
+    await _recreateNotificationChannels();
     print('🔇 Sound disabled and saved');
     Get.snackbar(
       'Sound Off',
@@ -307,17 +436,45 @@ class NotificationService extends GetxService {
     }
   }
 
+  Future<void> _recreateNotificationChannels() async {
+    print(
+      '🔄 Recreating notification channels with sound: ${soundEnabled.value}',
+    );
+
+    final androidImpl =
+        _notifications
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
+
+    if (androidImpl != null) {
+      try {
+        await androidImpl.deleteNotificationChannel('simple_channel');
+        await androidImpl.deleteNotificationChannel('scheduled_channel');
+        await androidImpl.deleteNotificationChannel('prayer_channel');
+        await androidImpl.deleteNotificationChannel('reminder_channel');
+      } catch (e) {
+        print('⚠️ Error deleting channels: $e');
+      }
+    }
+
+    await _createNotificationChannels();
+  }
+
   // Cancel all scheduled notifications
   Future<void> cancelAllNotifications() async {
-    _scheduledTimer?.cancel();
     await _notifications.cancelAll();
-    print('🗑️ All notifications and timers cancelled');
+    print('🗑️ All REAL scheduled notifications cancelled');
+  }
+
+  // Get pending notifications (now these will show real scheduled ones!)
+  Future<List<PendingNotificationRequest>> getPendingNotifications() async {
+    return await _notifications.pendingNotificationRequests();
   }
 
   // Method to open app notification settings
   Future<void> openNotificationSettings() async {
     try {
-      // This opens the app's notification settings page
       await _notifications
           .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin
