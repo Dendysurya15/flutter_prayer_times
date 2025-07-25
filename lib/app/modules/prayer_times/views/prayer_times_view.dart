@@ -13,18 +13,7 @@ class PrayerTimesView extends GetView<PrayerTimesController> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F9F5),
-      appBar: AppBar(
-        title: const Text('Prayer Times'),
-        backgroundColor: Colors.green,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: controller.refreshPrayerTimes,
-          ),
-        ],
-      ),
+
       body: Obx(() {
         if (controller.isLoading.value) {
           return const Center(

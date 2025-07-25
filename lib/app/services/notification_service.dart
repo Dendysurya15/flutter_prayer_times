@@ -1,33 +1,49 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:timezone/timezone.dart' as tz;
-import 'package:timezone/data/latest.dart' as tz;
-import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:get/get.dart';
-import 'dart:typed_data'; // Add this import for Int64List
-import '../data/models/prayer_times_model.dart';
+import 'dart:async';
 
 class NotificationService extends GetxService {
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
-  var isNotificationEnabled = true.obs;
-  var reminderMinutes = 10.obs; // 10 minutes before prayer time
+  // Sound preference with SharedPreferences
+  var soundEnabled = true.obs;
+  late SharedPreferences _prefs;
 
   @override
   Future<void> onInit() async {
     super.onInit();
+    await _initPreferences();
     await initializeNotifications();
-    await _configureTimeZone();
+  }
+
+  Future<void> _initPreferences() async {
+    try {
+      _prefs = await SharedPreferences.getInstance();
+      // Load saved sound preference (default: true)
+      soundEnabled.value = _prefs.getBool('notification_sound_enabled') ?? true;
+      print('🔊 Loaded sound preference: ${soundEnabled.value}');
+    } catch (e) {
+      print('❌ Error loading preferences: $e');
+      soundEnabled.value = true; // Default to enabled
+    }
+  }
+
+  Future<void> _saveSoundPreference(bool enabled) async {
+    try {
+      await _prefs.setBool('notification_sound_enabled', enabled);
+      print('💾 Saved sound preference: $enabled');
+    } catch (e) {
+      print('❌ Error saving sound preference: $e');
+    }
   }
 
   Future<void> initializeNotifications() async {
-    // Android initialization
     const AndroidInitializationSettings androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    // iOS initialization
     const DarwinInitializationSettings iosSettings =
         DarwinInitializationSettings(
           requestAlertPermission: true,
@@ -40,156 +56,42 @@ class NotificationService extends GetxService {
       iOS: iosSettings,
     );
 
-    await _notifications.initialize(
-      settings,
-      onDidReceiveNotificationResponse: _onNotificationTapped,
-    );
+    await _notifications.initialize(settings);
 
-    // Request permissions
-    await _requestPermissions();
-  }
-
-  Future<void> _requestPermissions() async {
-    // Request notification permissions for iOS
-    await _notifications
-        .resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin
-        >()
-        ?.requestPermissions(alert: true, badge: true, sound: true);
-
-    // Request notification permissions for Android 13+
+    // Request permissions for scheduled notifications
     await _notifications
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >()
         ?.requestNotificationsPermission();
+
+    await _notifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.requestExactAlarmsPermission();
   }
 
-  Future<void> _configureTimeZone() async {
-    tz.initializeTimeZones();
-    final String timeZoneName = await FlutterTimezone.getLocalTimezone();
-    tz.setLocalLocation(tz.getLocation(timeZoneName));
-  }
-
-  void _onNotificationTapped(NotificationResponse response) {
-    // Handle notification tap
-    print('Notification tapped: ${response.payload}');
-    // Navigate to prayer times screen or show specific prayer info
-    Get.toNamed('/home'); // Navigate to home when notification is tapped
-  }
-
-  Future<void> schedulePrayerNotifications(PrayerTimesModel prayerTimes) async {
-    if (!isNotificationEnabled.value) return;
-
-    // Cancel all existing notifications first
-    await cancelAllNotifications();
-
-    final prayers = [
-      {'name': 'Fajr', 'time': prayerTimes.fajr},
-      {'name': 'Dhuhr', 'time': prayerTimes.dhuhr},
-      {'name': 'Asr', 'time': prayerTimes.asr},
-      {'name': 'Maghrib', 'time': prayerTimes.maghrib},
-      {'name': 'Isha', 'time': prayerTimes.isha},
-    ];
-
-    final now = DateTime.now();
-
-    for (int i = 0; i < prayers.length; i++) {
-      final prayer = prayers[i];
-      final prayerTime = _parseTimeToday(prayer['time']!);
-
-      // Skip if prayer time has already passed today
-      if (prayerTime.isBefore(now)) {
-        // Schedule for tomorrow
-        final tomorrowPrayerTime = prayerTime.add(const Duration(days: 1));
-        await _scheduleNotification(
-          id: i * 2, // Even IDs for prayer time notifications
-          title: '🕌 ${prayer['name']} Prayer Time',
-          body:
-              'It\'s time for ${prayer['name']} prayer. May Allah accept your prayers.',
-          scheduledTime: tomorrowPrayerTime,
-          payload: 'prayer_${prayer['name']?.toLowerCase()}',
-        );
-
-        // Schedule reminder notification (10 minutes before)
-        final reminderTime = tomorrowPrayerTime.subtract(
-          Duration(minutes: reminderMinutes.value),
-        );
-        if (reminderTime.isAfter(now)) {
-          await _scheduleNotification(
-            id: i * 2 + 1, // Odd IDs for reminder notifications
-            title: '⏰ ${prayer['name']} Prayer Reminder',
-            body:
-                '${prayer['name']} prayer in ${reminderMinutes.value} minutes. Please prepare for prayer.',
-            scheduledTime: reminderTime,
-            payload: 'reminder_${prayer['name']?.toLowerCase()}',
-          );
-        }
-      } else {
-        // Schedule for today
-        await _scheduleNotification(
-          id: i * 2,
-          title: '🕌 ${prayer['name']} Prayer Time',
-          body:
-              'It\'s time for ${prayer['name']} prayer. May Allah accept your prayers.',
-          scheduledTime: prayerTime,
-          payload: 'prayer_${prayer['name']?.toLowerCase()}',
-        );
-
-        // Schedule reminder notification (10 minutes before)
-        final reminderTime = prayerTime.subtract(
-          Duration(minutes: reminderMinutes.value),
-        );
-        if (reminderTime.isAfter(now)) {
-          await _scheduleNotification(
-            id: i * 2 + 1,
-            title: '⏰ ${prayer['name']} Prayer Reminder',
-            body:
-                '${prayer['name']} prayer in ${reminderMinutes.value} minutes. Please prepare for prayer.',
-            scheduledTime: reminderTime,
-            payload: 'reminder_${prayer['name']?.toLowerCase()}',
-          );
-        }
-      }
-    }
-
-    Get.snackbar(
-      'Notifications Scheduled',
-      'Prayer time notifications have been set up successfully',
-      backgroundColor: Colors.green,
-      colorText: Colors.white,
-    );
-  }
-
-  Future<void> _scheduleNotification({
-    required int id,
-    required String title,
-    required String body,
-    required DateTime scheduledTime,
-    String? payload,
-  }) async {
-    // Define vibration pattern outside const
-    final vibrationPattern = Int64List.fromList([0, 1000, 500, 1000]);
+  // Simple notification for testing
+  Future<void> showSimpleNotification() async {
+    print('🔔 Sending simple notification...');
+    print('🔊 Sound enabled: ${soundEnabled.value}');
 
     final androidDetails = AndroidNotificationDetails(
-      'prayer_times_channel',
-      'Prayer Times',
-      channelDescription: 'Notifications for prayer times and reminders',
+      'simple_channel',
+      'Simple Notifications',
+      channelDescription: 'Basic notifications',
       importance: Importance.high,
       priority: Priority.high,
       icon: '@mipmap/ic_launcher',
-      sound: const RawResourceAndroidNotificationSound(
-        'adhan',
-      ), // You can add custom sound
+      playSound: soundEnabled.value,
       enableVibration: true,
-      vibrationPattern: vibrationPattern, // Now it works!
     );
 
-    const iosDetails = DarwinNotificationDetails(
+    final iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
-      presentSound: true,
-      sound: 'adhan.caf', // You can add custom sound
+      presentSound: soundEnabled.value,
     );
 
     final notificationDetails = NotificationDetails(
@@ -197,68 +99,245 @@ class NotificationService extends GetxService {
       iOS: iosDetails,
     );
 
-    // Try this version without UILocalNotificationDateInterpretation
-    await _notifications.zonedSchedule(
-      id,
-      title,
-      body,
-      tz.TZDateTime.from(scheduledTime, tz.local),
+    await _notifications.show(
+      1,
+      'Test Notification',
+      'This is a simple test notification! 🔔',
       notificationDetails,
-      payload: payload,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      // Remove this line if still causing issues
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
     );
 
-    print('Notification scheduled: $title at $scheduledTime');
+    print('✅ Simple notification sent!');
   }
 
-  DateTime _parseTimeToday(String timeString) {
-    final parts = timeString.split(':');
-    final hour = int.parse(parts[0]);
-    final minute = int.parse(parts[1]);
+  // Schedule test notification using Timer
+  Timer? _scheduledTimer;
 
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day, hour, minute);
-  }
-
-  Future<void> cancelAllNotifications() async {
-    await _notifications.cancelAll();
-    print('All notifications cancelled');
-  }
-
-  Future<void> toggleNotifications(bool enabled) async {
-    isNotificationEnabled.value = enabled;
-    if (!enabled) {
-      await cancelAllNotifications();
-      Get.snackbar(
-        'Notifications Disabled',
-        'Prayer time notifications have been turned off',
-        backgroundColor: Colors.orange,
-        colorText: Colors.white,
+  Future<void> scheduleNotification({required int seconds}) async {
+    try {
+      print(
+        '⏰ Scheduling notification for $seconds seconds from now using Timer...',
       );
-    } else {
-      Get.snackbar(
-        'Notifications Enabled',
-        'Please refresh prayer times to schedule notifications',
-        backgroundColor: Colors.green,
-        colorText: Colors.white,
-      );
+      print('🔊 Sound enabled: ${soundEnabled.value}');
+
+      // Cancel any existing timer
+      _scheduledTimer?.cancel();
+
+      // Create a timer that will fire the notification
+      _scheduledTimer = Timer(Duration(seconds: seconds), () async {
+        print('🔔 Timer fired! Sending scheduled notification...');
+
+        final androidDetails = AndroidNotificationDetails(
+          'scheduled_channel',
+          'Scheduled Notifications',
+          channelDescription: 'Notifications scheduled for future',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+          playSound: soundEnabled.value,
+          enableVibration: true,
+        );
+
+        final iosDetails = DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: soundEnabled.value,
+        );
+
+        final notificationDetails = NotificationDetails(
+          android: androidDetails,
+          iOS: iosDetails,
+        );
+
+        await _notifications.show(
+          2,
+          'Scheduled Notification ⏰',
+          'This notification was scheduled $seconds seconds ago! 🎉',
+          notificationDetails,
+        );
+
+        print('✅ Scheduled notification sent!');
+      });
+
+      print('✅ Timer scheduled successfully for $seconds seconds');
+    } catch (e) {
+      print('❌ Error scheduling notification: $e');
+      throw e;
     }
   }
 
-  void setReminderMinutes(int minutes) {
-    reminderMinutes.value = minutes;
+  // Prayer notification methods
+  Future<void> schedulePrayerNotification({
+    required int seconds,
+    required String title,
+    required String body,
+  }) async {
+    try {
+      print('🕌 Scheduling prayer notification: $title in $seconds seconds');
+      print('🔊 Sound enabled: ${soundEnabled.value}');
+
+      Timer(Duration(seconds: seconds), () async {
+        print('🔔 Prayer time! Sending: $title');
+
+        final androidDetails = AndroidNotificationDetails(
+          'prayer_channel',
+          'Prayer Times',
+          channelDescription: 'Prayer time notifications',
+          importance: Importance.max,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+          playSound: soundEnabled.value,
+          enableVibration: true,
+          ongoing: false,
+          autoCancel: true,
+        );
+
+        final iosDetails = DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: soundEnabled.value,
+          interruptionLevel: InterruptionLevel.timeSensitive,
+        );
+
+        final notificationDetails = NotificationDetails(
+          android: androidDetails,
+          iOS: iosDetails,
+        );
+
+        await _notifications.show(
+          DateTime.now().millisecondsSinceEpoch % 10000,
+          title,
+          body,
+          notificationDetails,
+        );
+
+        print('✅ Prayer notification sent: $title');
+      });
+
+      print('✅ Prayer notification scheduled successfully');
+    } catch (e) {
+      print('❌ Error scheduling prayer notification: $e');
+      throw e;
+    }
+  }
+
+  Future<void> scheduleReminderNotification({
+    required int seconds,
+    required String title,
+    required String body,
+  }) async {
+    try {
+      print('⏰ Scheduling reminder notification: $title in $seconds seconds');
+      print('🔊 Sound enabled: ${soundEnabled.value}');
+
+      Timer(Duration(seconds: seconds), () async {
+        print('🔔 Reminder time! Sending: $title');
+
+        final androidDetails = AndroidNotificationDetails(
+          'reminder_channel',
+          'Prayer Reminders',
+          channelDescription: 'Prayer reminder notifications',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+          playSound: soundEnabled.value,
+          enableVibration: true,
+          ongoing: false,
+          autoCancel: true,
+        );
+
+        final iosDetails = DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: soundEnabled.value,
+          interruptionLevel: InterruptionLevel.active,
+        );
+
+        final notificationDetails = NotificationDetails(
+          android: androidDetails,
+          iOS: iosDetails,
+        );
+
+        await _notifications.show(
+          DateTime.now().millisecondsSinceEpoch % 10000,
+          title,
+          body,
+          notificationDetails,
+        );
+
+        print('✅ Reminder notification sent: $title');
+      });
+
+      print('✅ Reminder notification scheduled successfully');
+    } catch (e) {
+      print('❌ Error scheduling reminder notification: $e');
+      throw e;
+    }
+  }
+
+  // Sound control methods with persistence
+  Future<void> enableSound() async {
+    soundEnabled.value = true;
+    await _saveSoundPreference(true);
+    print('🔊 Sound enabled and saved');
     Get.snackbar(
-      'Reminder Updated',
-      'Prayer reminders will now be sent $minutes minutes before prayer time',
-      backgroundColor: Colors.blue,
+      'Sound On',
+      'Notification sounds are now enabled 🔊',
+      backgroundColor: Colors.green,
       colorText: Colors.white,
     );
   }
 
-  Future<List<PendingNotificationRequest>> getPendingNotifications() async {
-    return await _notifications.pendingNotificationRequests();
+  Future<void> disableSound() async {
+    soundEnabled.value = false;
+    await _saveSoundPreference(false);
+    print('🔇 Sound disabled and saved');
+    Get.snackbar(
+      'Sound Off',
+      'Notification sounds are now disabled 🔇',
+      backgroundColor: Colors.orange,
+      colorText: Colors.white,
+    );
+  }
+
+  Future<void> toggleSound() async {
+    if (soundEnabled.value) {
+      await disableSound();
+    } else {
+      await enableSound();
+    }
+  }
+
+  // Cancel all scheduled notifications
+  Future<void> cancelAllNotifications() async {
+    _scheduledTimer?.cancel();
+    await _notifications.cancelAll();
+    print('🗑️ All notifications and timers cancelled');
+  }
+
+  // Method to open app notification settings
+  Future<void> openNotificationSettings() async {
+    try {
+      // This opens the app's notification settings page
+      await _notifications
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.requestNotificationsPermission();
+
+      Get.snackbar(
+        'Settings',
+        'Opening notification settings...',
+        backgroundColor: Colors.teal,
+        colorText: Colors.white,
+      );
+    } catch (e) {
+      print('❌ Error opening settings: $e');
+      Get.snackbar(
+        'Error',
+        'Could not open notification settings',
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+      );
+    }
   }
 }

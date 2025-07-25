@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
 import 'dart:convert';
 import '../../../data/models/prayer_times_model.dart';
-import '../../../services/notification_service.dart'; // Add this import
+import '../../../services/notification_service.dart';
 
 class PrayerTimesController extends GetxController {
   var isLoading = true.obs;
@@ -44,10 +44,8 @@ class PrayerTimesController extends GetxController {
           prayerTimes.value = PrayerTimesModel.fromJson(data);
           calculateNextPrayer();
 
-          // Schedule notifications for prayer times
-          await _notificationService.schedulePrayerNotifications(
-            prayerTimes.value!,
-          );
+          // 🕌 SCHEDULE REAL PRAYER NOTIFICATIONS
+          await _scheduleAllPrayerNotifications();
         } else {
           Get.snackbar('Error', 'Failed to fetch prayer times');
         }
@@ -219,10 +217,8 @@ class PrayerTimesController extends GetxController {
         prayerTimes.value = PrayerTimesModel.fromJson(data);
         calculateNextPrayer();
 
-        // Schedule notifications for prayer times
-        await _notificationService.schedulePrayerNotifications(
-          prayerTimes.value!,
-        );
+        // 🕌 SCHEDULE REAL PRAYER NOTIFICATIONS
+        await _scheduleAllPrayerNotifications();
 
         Get.snackbar(
           'Success',
@@ -269,24 +265,145 @@ class PrayerTimesController extends GetxController {
     }
   }
 
+  // 🕌 SCHEDULE ALL PRAYER NOTIFICATIONS
+  Future<void> _scheduleAllPrayerNotifications() async {
+    if (prayerTimes.value == null) return;
+
+    try {
+      print('🕌 Scheduling all prayer notifications...');
+
+      // Cancel any existing notifications first
+      await _notificationService.cancelAllNotifications();
+
+      final now = DateTime.now();
+      final prayers = [
+        {'name': 'Fajr', 'time': prayerTimes.value!.fajr, 'emoji': '🌅'},
+        {'name': 'Dhuhr', 'time': prayerTimes.value!.dhuhr, 'emoji': '☀️'},
+        {'name': 'Asr', 'time': prayerTimes.value!.asr, 'emoji': '🌤️'},
+        {'name': 'Maghrib', 'time': prayerTimes.value!.maghrib, 'emoji': '🌅'},
+        {'name': 'Isha', 'time': prayerTimes.value!.isha, 'emoji': '🌙'},
+      ];
+
+      int scheduledCount = 0;
+
+      for (int i = 0; i < prayers.length; i++) {
+        final prayer = prayers[i];
+        final prayerTimeString = prayer['time']!;
+
+        // Parse prayer time for today
+        final prayerTime = _parseTimeToday(prayerTimeString);
+        print('📿 Processing ${prayer['name']}: $prayerTime');
+
+        // Determine target time (today or tomorrow)
+        DateTime targetPrayerTime;
+        if (prayerTime.isBefore(now)) {
+          targetPrayerTime = prayerTime.add(const Duration(days: 1));
+          print(
+            '   ⏭️ Prayer time passed today, scheduling for tomorrow: $targetPrayerTime',
+          );
+        } else {
+          targetPrayerTime = prayerTime;
+          print('   ✅ Prayer time is today: $targetPrayerTime');
+        }
+
+        // Calculate seconds until prayer time
+        final secondsUntilPrayer = targetPrayerTime.difference(now).inSeconds;
+
+        if (secondsUntilPrayer > 0) {
+          // Schedule prayer time notification
+          await _schedulePrayerNotification(
+            seconds: secondsUntilPrayer,
+            title: '${prayer['emoji']} ${prayer['name']} Prayer Time',
+            body:
+                'It\'s time for ${prayer['name']} prayer. May Allah accept your prayers. 🤲',
+          );
+          scheduledCount++;
+          print(
+            '   🔔 Scheduled prayer notification in $secondsUntilPrayer seconds',
+          );
+
+          // Schedule reminder (10 minutes before)
+          const reminderMinutes = 10;
+          final reminderSeconds = secondsUntilPrayer - (reminderMinutes * 60);
+
+          if (reminderSeconds > 0) {
+            await _scheduleReminderNotification(
+              seconds: reminderSeconds,
+              title: '⏰ ${prayer['name']} Prayer Reminder',
+              body:
+                  '${prayer['name']} prayer in $reminderMinutes minutes. Please prepare for prayer. 🕌',
+            );
+            scheduledCount++;
+            print('   ⏰ Scheduled reminder in $reminderSeconds seconds');
+          } else {
+            print('   ⚠️ Reminder time has passed, skipping reminder');
+          }
+        } else {
+          print('   ⚠️ Prayer time has passed, skipping');
+        }
+      }
+
+      print('✅ All prayer notifications scheduled! Total: $scheduledCount');
+    } catch (e) {
+      print('❌ Error scheduling prayer notifications: $e');
+      Get.snackbar(
+        'Error',
+        'Failed to schedule prayer notifications: $e',
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+      );
+    }
+  }
+
+  // Helper method to parse time string to DateTime for today
+  DateTime _parseTimeToday(String timeString) {
+    final parts = timeString.split(':');
+    final hour = int.parse(parts[0]);
+    final minute = int.parse(parts[1]);
+
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day, hour, minute);
+  }
+
+  // Schedule prayer time notification
+  Future<void> _schedulePrayerNotification({
+    required int seconds,
+    required String title,
+    required String body,
+  }) async {
+    await _notificationService.schedulePrayerNotification(
+      seconds: seconds,
+      title: title,
+      body: body,
+    );
+  }
+
+  // Schedule reminder notification
+  Future<void> _scheduleReminderNotification({
+    required int seconds,
+    required String title,
+    required String body,
+  }) async {
+    await _notificationService.scheduleReminderNotification(
+      seconds: seconds,
+      title: title,
+      body: body,
+    );
+  }
+
   void refreshPrayerTimes() {
     getPrayerTimes();
   }
 
-  // Notification control methods
-  void toggleNotifications(bool enabled) {
-    _notificationService.toggleNotifications(enabled);
+  // Simple method to test notification from prayer times page
+  Future<void> testNotification() async {
+    await _notificationService.showSimpleNotification();
   }
 
-  void setReminderTime(int minutes) {
-    _notificationService.setReminderMinutes(minutes);
-    // Reschedule notifications with new reminder time
+  // Method to manually reschedule notifications
+  Future<void> rescheduleNotifications() async {
     if (prayerTimes.value != null) {
-      _notificationService.schedulePrayerNotifications(prayerTimes.value!);
+      await _scheduleAllPrayerNotifications();
     }
   }
-
-  bool get isNotificationEnabled =>
-      _notificationService.isNotificationEnabled.value;
-  int get reminderMinutes => _notificationService.reminderMinutes.value;
 }

@@ -6,6 +6,7 @@ abstract class Routes {
   static const HOME = _Paths.HOME;
   static const DONATION = _Paths.DONATION;
   static const PRAYER_TIMES = _Paths.PRAYER_TIMES;
+  static const NOTIFICATION_TEST = _Paths.NOTIFICATION_TEST;
 }
 
 abstract class _Paths {
@@ -13,4 +14,5 @@ abstract class _Paths {
   static const HOME = '/home';
   static const DONATION = '/donation';
   static const PRAYER_TIMES = '/prayer-times';
+  static const NOTIFICATION_TEST = '/notification-test';
 }
